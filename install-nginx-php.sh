@@ -1,26 +1,64 @@
 #!/bin/bash
 # Install Nginx + php-fpm + apc cache for Ubuntu and Debian distributions
 cd ~
-apt-get update
-apt-get -fy dist-upgrade
-apt-get -fy upgrade
+# apt-get update
+# apt-get -fy dist-upgrade
+# apt-get -fy upgrade
 apt-get install lsb-release bc
 REL=`lsb_release -sc`
 DISTRO=`lsb_release -is | tr [:upper:] [:lower:]`
 NCORES=` cat /proc/cpuinfo | grep cores | wc -l`
 WORKER=`bc -l <<< "4*$NCORES"`
 
+OPTION=${1-2}
+SharedStorageAccountName=$2
+SharedAzureFileName=$3
+SharedStorageAccountKey=$4
+PHPVersion=${5-5}
+InstallTools=${6:-"no"}
+ToolsUser=$7
+ToolsPass=$8
+
 wget http://nginx.org/keys/nginx_signing.key
-echo "deb http://nginx.org/packages/$DISTRO/ $REL nginx" >> /etc/apt/sources.list
-echo "deb-src http://nginx.org/packages/$DISTRO/ $REL nginx" >> /etc/apt/sources.list
 apt-key add nginx_signing.key
-apt-get update
+add-apt-repository "deb http://nginx.org/packages/$DISTRO $REL nginx"
+# add-apt-repository "deb-src http://nginx.org/packages/$DISTRO $REL nginx"
+if [ "$PHPVersion" -eq 7 ]; then
+apt-get install -fy python-software-properties
+LC_ALL=en_US.UTF-8 add-apt-repository ppa:ondrej/php -y
+fi
+
+apt-get -y update
+
+apt-get install -y -f cifs-utils
+
+# Create Azure file shere if is the first VM
+if [ $OPTION -lt 1 ]; 
+then  
+# Create Azure file share that will be used by front end VM's for moodledata directory
+wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/create-file-share.sh
+bash create-file-share.sh $SharedStorageAccountName $SharedAzureFileName $SharedStorageAccountKey > /root/create-file-share.log
+
+fi
+
 apt-get install -fy nginx
+# # PHP 7
+if [ "$PHPVersion" -eq 7 ]; then
+apt-get install php7.0 php7.0-fpm php7.0-mysql -y
+apt-get install -fy php-apc php7.0-gd
+apt-get --purge autoremove -y
+# replace www-data to nginx into /etc/php/7.0/fpm/pool.d/www.conf
+sed -i 's/www-data/nginx/g' /etc/php/7.0/fpm/pool.d/www.conf
+service php7.0-fpm restart
+# # PHP 5
+else
 apt-get install -fy php5-fpm php5-cli php5-mysql
 apt-get install -fy php-apc php5-gd
 # replace www-data to nginx into /etc/php5/fpm/pool.d/www.conf
 sed -i 's/www-data/nginx/g' /etc/php5/fpm/pool.d/www.conf
 service php5-fpm restart
+fi
+
 # backup default Nginx configuration
 mkdir /etc/nginx/conf-bkp
 cp /etc/nginx/conf.d/default.conf /etc/nginx/conf-bkp/default.conf
@@ -28,139 +66,87 @@ cp /etc/nginx/nginx.conf /etc/nginx/nginx-conf.old
 #
 # Replace nginx.conf
 #
-echo -e "user nginx www-data;\nworker_processes $WORKER;" > /etc/nginx/nginx.conf
-echo -e 'pid /var/run/nginx.pid;
+wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/files/nginx.conf
 
-events {
-        worker_connections 768;
-        # multi_accept on;
-}
-
-http {
-# Basic Settings
-        sendfile on;
-        tcp_nopush on;
-        tcp_nodelay on;
-        keepalive_timeout 5;
-        types_hash_max_size 2048;
-        # server_tokens off;
-
-        # server_names_hash_bucket_size 64;
-        # server_name_in_redirect off;
-
-        include /etc/nginx/mime.types;
-        default_type application/octet-stream;
-
-# Logging Settings
-log_format gzip '$remote_addr - $remote_user [$time_local]  '
-                '"$request" $status $bytes_sent '
-                '"$http_referer" "$http_user_agent" "$gzip_ratio"';
-
-        access_log /var/log/nginx/access.log gzip buffer=32k;
-        error_log /var/log/nginx/error.log notice;
-
-# Gzip Settings
-        gzip on;
-        gzip_disable "msie6";
-
-        gzip_vary on;
-        gzip_proxied any;
-        gzip_comp_level 6;
-        gzip_buffers 16 8k;
-        gzip_http_version 1.1;
-        gzip_types text/plain text/css application/json application/x-javascript text/xml application/xml application/xml+rss t
-ext/javascript;
-
-# Virtual Host Configs
-        include /etc/nginx/conf.d/*.conf;
-        include /etc/nginx/sites-enabled/*;
-
-}' >> /etc/nginx/nginx.conf
+sed -i "s/#WORKER#/$WORKER/g" nginx.conf
+mv nginx.conf /etc/nginx/
 
 # replace Nginx default.conf
 #
-echo -e '# Upstream to abstract backend connection(s) for php
-upstream php {
-	server unix:/var/run/php5-fpm.sock;
-#        server unix:/tmp/php-cgi.socket;
-#        server 127.0.0.1:9000;
-}
- 
-server {
-    	listen       80;
+wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/files/default.conf
 
-    	#charset koi8-r;
-    	#access_log  /var/log/nginx/log/host.access.log  main;
-        ## Your website name goes here.
-        server_name localhost;
-        ## Your only path reference.
-        root /usr/share/nginx/html;
-        ## This should be in your http block and if it is, it`s not needed here.
-        index index.htm index.html index.php;
-  	gzip on;
-	gzip_types text/css text/x-component application/x-javascript application/javascript text/javascript text/x-js text/richtext image/svg+xml text/plain text/xsd text/xsl text/xml image/x-icon;
+# replace for php7 sock
+if [ "$PHPVersion" -eq 7 ]; then
+sed -i "s,/var/run/php5-fpm.sock,/var/run/php/php7.0-fpm.sock,g" default.conf
+fi
 
-        location = /favicon.ico {
-                log_not_found off;
-                access_log off;
-        }
- 
-        location = /robots.txt {
-                allow all;
-                log_not_found off;
-                access_log off;
-        }
- 
-        location / {
-                # This is cool because no php is touched for static content. 
-                # include the "?$args" part so non-default permalinks doesn`t break when using query string
-                try_files $uri $uri/ /index.php?$args;
-        }
-        location ~ \.php$ {
-                #NOTE: You should have "cgi.fix_pathinfo = 0;" in php.ini
-#	    	root           html;
-    		#    fastcgi_pass   127.0.0.1:9000;
-    		fastcgi_index  index.php;
-    		fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;
-    		include        fastcgi_params;
-                # include fastcgi.conf;
-            	fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-                fastcgi_intercept_errors on;
-                fastcgi_pass php;
-        }
-	location ~ \.(ttf|ttc|otf|eot|woff|font.css)$ {
-   		add_header Access-Control-Allow-Origin "*";
-	}
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico)$ {
-                expires max;
-                log_not_found off;
-        }
-}' > /etc/nginx/conf.d/default.conf
+#sed -i "s/#WORKER#/$WORKER/g" nginx.conf
+mv default.conf /etc/nginx/conf.d/
 
 # Memcache client installation
+# ## php 7
+if [ "$PHPVersion" -eq 7 ]; then
+apt-get install -fy php-memcached
+# wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/files/memcache.ini
+# mv memcache.ini /etc/php/mods-available/
+# ln -s /etc/php/mods-available/memcache.ini  /etc/php/7.0/fpm/conf.d/20-memcache.ini
+# ## php 5
+else
 apt-get install -fy php-pear
 apt-get install -fy php5-dev
 printf "\n" |pecl install -f memcache
-echo -e '
-; /etc/php.d/memcache.ini
+wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/files/memcache.ini
+#sed -i "s/#WORKER#/$WORKER/g" memcache.ini
+mv memcache.ini /etc/php5/mods-available/
+ln -s /etc/php5/mods-available/memcache.ini  /etc/php5/fpm/conf.d/20-memcache.ini
+fi
+#
+# mount share file on /usr/share/nginx/html
 
-extension = memcache.so
+# azure storage share list $SharedAzureFileName -a $SharedStorageAccountName -k $SharedStorageAccountKey |grep -q 'html' && echo 'yes'
+mount -t cifs //$SharedStorageAccountName.file.core.windows.net/$SharedAzureFileName /usr/share/nginx/html -o uid=$(id -u nginx),vers=2.1,username=$SharedStorageAccountName,password=$SharedStorageAccountKey,dir_mode=0770,file_mode=0770
 
-memcache.allow_failover = 1
-memcache.max_failover_attempts = 20
-memcache.chunk_size = 32768
-memcache.default_port = 11211
-memcache.hash_strategy = standard
-memcache.hash_function = crc32
-' > /etc/php5/mods-available/memcache.ini
- ln -s /etc/php5/mods-available/memcache.ini  /etc/php5/fpm/conf.d/20-memcache.ini
+#add mount to /etc/fstab to persist across reboots
+chmod 770 /etc/fstab
+echo "//$SharedStorageAccountName.file.core.windows.net/$SharedAzureFileName /usr/share/nginx/html cifs uid=$(id -u nginx),vers=3.0,username=$SharedStorageAccountName,password=$SharedStorageAccountKey,dir_mode=0770,file_mode=0770" >> /etc/fstab
+
+if [ $OPTION -lt 1 ]; 
+then  
 #
 # Edit default page to show php info
 #
-mv /usr/share/nginx/html/index.html /usr/share/nginx/html/index.php
-echo -e "\n<?php\nphpinfo();\n?>" >> /usr/share/nginx/html/index.php
+#mv /usr/share/nginx/html/index.html /usr/share/nginx/html/index.php
+mkdir /usr/share/nginx/html/web
+echo -e "<html><title>Azure Nginx PHP</title><body><h2 align='center'>Your Nginx and PHP are running!</h2><h2 align='center'>Host: <?= gethostname() ?></h2></br>\n<?php\nphpinfo();\n?></body>" > /usr/share/nginx/html/web/index.php
+#
+#
+# Install admin tools
+if [ $InstallTools == "yes" ];
+then
+   wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/tools/install-tools.sh
+   bash install-tools.sh $ToolsUser $ToolsPass
+fi
+
+fi
+
+if [ $InstallTools == "yes" ];
+then
+if [ $OPTION -gt 0 ]; 
+then  
+wget https://raw.githubusercontent.com/juliosene/azure-nginx-php-mariadb-cluster/master/tools/tools.conf
+mv tools.conf /etc/nginx/conf.d/
+fi
+fi
+
 #
 # Services restart
 #
+if [ "$PHPVersion" -eq 7 ]; then
+sed -i "s/upload_max_filesize = 2M/upload_max_filesize = 100M/g" /etc/php/7.0/fpm/php.ini
+service php7.0-fpm restart
+else
+sed -i "s/upload_max_filesize = 2M/upload_max_filesize = 100M/g" /etc/php5/fpm/php.ini
 service php5-fpm restart
+fi
+
 service nginx restart
