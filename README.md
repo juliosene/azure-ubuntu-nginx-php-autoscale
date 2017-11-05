@@ -4,3 +4,5 @@
 <a href="http://armviz.io/#/?load=https%3A%2F%2Fraw.githubusercontent.com%2Fjuliosene%2Fazure-ubuntu-nginx-php-autoscale%2Fmaster%2Fazuredeploy.json" target="_blank">
     <img src="http://armviz.io/visualizebutton.png"/>
 </a>
+
+Not ready to deploy!!!
