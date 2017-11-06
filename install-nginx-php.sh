@@ -28,7 +28,6 @@ apt-get install -fy php-gd
 # apt-get --purge autoremove -y
 # replace www-data to nginx into /etc/php/7.0/fpm/pool.d/www.conf
 # sed -i 's/www-data/nginx/g' /etc/php/7.0/fpm/pool.d/www.conf
-service php7.0-fpm restart
 
 mkdir /var/www/html/autoscale
 
@@ -45,3 +44,6 @@ wget https://raw.githubusercontent.com/juliosene/azure-ubuntu-nginx-php-autoscal
 cp  /etc/nginx/sites-enabled/default ~/default-site.bkp
 
 cp default /etc/nginx/sites-enabled/default
+
+service php7.0-fpm restart
+service nginx restart
